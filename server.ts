@@ -1,16 +1,34 @@
 /**
  * HTTP server that exposes the CSV → Google Sheets sync as an endpoint.
  *
- * POST /sync  – body: JSON SyncConfig (csvUrl, spreadsheetId, sheetName, dateColumnIndex)
- * GET  /health – liveness check
+ * @overview
+ * This module starts a minimal HTTP server with two routes. No framework
+ * dependencies; uses Node's built-in `http` module only.
+ *
+ * @routes
+ * - POST /sync  – Runs the sync. Request body must be JSON matching {@link SyncConfig}.
+ *   Success: 200 with `{ ok: true }`.
+ *   Client error (bad JSON or missing/invalid fields): 400 with `{ error: string }`.
+ *   Server error (sync threw): 500 with `{ error: string }`.
+ * - GET /health – Liveness probe. Always returns 200 with `{ status: "ok" }`.
+ *
+ * @env
+ * - PORT – Port to listen on (default: 3000).
  */
 
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { syncCsvToSheet } from "./syncCsvToSheet";
 import type { SyncConfig } from "./syncCsvToSheet";
 
+/** Port to bind. Read from process.env.PORT, fallback 3000. */
 const PORT = Number(process.env.PORT) || 3000;
 
+/**
+ * Reads the full request body as a UTF-8 string.
+ *
+ * @param req – Incoming HTTP request (stream).
+ * @returns Promise that resolves with the raw body string, or rejects on stream error.
+ */
 function parseBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -20,6 +38,12 @@ function parseBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+/**
+ * Type guard: checks if a value is a valid SyncConfig (all required fields present and correctly typed).
+ *
+ * @param body – Parsed JSON value (typically from request body).
+ * @returns true if body has csvUrl (string), spreadsheetId (string), sheetName (string), dateColumnIndex (number).
+ */
 function isSyncConfig(body: unknown): body is SyncConfig {
   if (body === null || typeof body !== "object") return false;
   const o = body as Record<string, unknown>;
@@ -31,11 +55,29 @@ function isSyncConfig(body: unknown): body is SyncConfig {
   );
 }
 
+/**
+ * Sends a JSON response and ends the response.
+ *
+ * @param res – HTTP response object.
+ * @param statusCode – HTTP status code (e.g. 200, 400, 500).
+ * @param data – Object to serialize as JSON (sent as response body).
+ */
 function sendJson(res: ServerResponse, statusCode: number, data: object): void {
   res.writeHead(statusCode, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }
 
+/**
+ * Handles POST /sync: parses JSON body, validates as SyncConfig, runs sync, returns 200 or error.
+ *
+ * - Non-POST: 405 Method not allowed.
+ * - Invalid or empty JSON: 400 Invalid JSON body.
+ * - Missing/invalid config fields: 400 with description of required fields.
+ * - syncCsvToSheet throws: 500 with thrown message.
+ *
+ * @param req – Incoming request (must be POST for sync).
+ * @param res – Response stream; always sent (JSON) by this function.
+ */
 async function handleSync(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method !== "POST") {
     sendJson(res, 405, { error: "Method not allowed" });
@@ -68,10 +110,26 @@ async function handleSync(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
+/**
+ * Handles GET /health: liveness check for orchestration/load balancers.
+ *
+ * @param _req – Unused (request).
+ * @param res – Response; sends 200 and `{ status: "ok" }`.
+ */
 function handleHealth(_req: IncomingMessage, res: ServerResponse): void {
   sendJson(res, 200, { status: "ok" });
 }
 
+/**
+ * Main request router: matches path (ignoring query string) and delegates to the right handler.
+ *
+ * - /sync   → handleSync
+ * - /health → handleHealth
+ * - else    → 404 Not found
+ *
+ * @param req – Incoming request.
+ * @param res – Response; always sent by a handler.
+ */
 async function requestListener(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = req.url ?? "";
   const path = url.split("?")[0];
