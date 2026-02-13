@@ -1,4 +1,10 @@
 /**
+ * Load .env into process.env before any other imports.
+ * Required so GOOGLE_APPLICATION_CREDENTIALS and PORT are available.
+ */
+import "dotenv/config";
+
+/**
  * HTTP server that exposes the CSV → Google Sheets sync as an endpoint.
  *
  * @overview

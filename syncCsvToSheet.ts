@@ -91,15 +91,22 @@ function filterCurrentMonthCsvRows(
 ): SheetRow[] {
   const nowYM = toYearMonth(new Date());
 
+  const stripLeadingQuote = (s: string): string =>
+    s.startsWith("'") ? s.slice(1) : s;
+
   return rows
     .map((row) => {
-      const raw = row[dateField];
-      const date = parseDateSafe(raw !== undefined ? raw : "");
+      const raw = stripLeadingQuote(
+        (row[dateField] !== undefined ? row[dateField] : "") as string
+      );
+      const date = parseDateSafe(raw);
       if (!date) return null;
 
       if (toYearMonth(date) !== nowYM) return null;
 
-      return Object.values(row);
+      return Object.values(row).map((v) =>
+        typeof v === "string" ? stripLeadingQuote(v) : v
+      );
     })
     .filter((r): r is SheetRow => Array.isArray(r));
 }
@@ -109,15 +116,41 @@ function filterCurrentMonthCsvRows(
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Parses credentials from GOOGLE_APPLICATION_CREDENTIALS.
+ * Supports either a file path (string) or inline JSON (object string).
+ *
+ * @returns Parsed credentials object, or undefined to use default (file path).
+ */
+function parseGoogleCredentials():
+  | { client_email: string; private_key: string; [k: string]: unknown }
+  | undefined {
+  const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (!raw || typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (parsed.client_email && parsed.private_key) return parsed as { client_email: string; private_key: string; [k: string]: unknown };
+    } catch {
+      // Invalid JSON – fall back to default (treat as path, will likely fail)
+    }
+  }
+  return undefined;
+}
+
+/**
  * Authenticates using Application Default Credentials.
+ * GOOGLE_APPLICATION_CREDENTIALS can be:
+ * - A file path to a service account JSON key
+ * - Inline JSON string (the full service account object)
  */
 function getSheetsClient(): sheets_v4.Sheets {
-  return google.sheets({
-    version: "v4",
-    auth: new google.auth.GoogleAuth({
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    }),
+  const credentials = parseGoogleCredentials();
+  const auth = new google.auth.GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    ...(credentials ? { credentials } : {}),
   });
+  return google.sheets({ version: "v4", auth });
 }
 
 /**
@@ -191,7 +224,7 @@ async function appendRows(
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${sheetName}!A2`,
-    valueInputOption: "RAW",
+    valueInputOption: "USER_ENTERED",
     requestBody: {
       values: rows,
     },
