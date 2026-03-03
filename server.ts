@@ -48,7 +48,7 @@ function parseBody(req: IncomingMessage): Promise<string> {
  * Type guard: checks if a value is a valid SyncConfig (all required fields present and correctly typed).
  *
  * @param body – Parsed JSON value (typically from request body).
- * @returns true if body has required params + optional well-formed syncMonth.
+ * @returns true if body has required params + optional well-formed syncDate.
  */
 function isSyncConfig(body: unknown): body is SyncConfig {
   if (body === null || typeof body !== "object") return false;
@@ -63,8 +63,8 @@ function isSyncConfig(body: unknown): body is SyncConfig {
     return false;
   }
 
-  if (o.syncMonth !== undefined) {
-    if (typeof o.syncMonth !== "string" || !/^\d{4}-\d{2}$/.test(o.syncMonth)) {
+  if (o.syncDate !== undefined) {
+    if (typeof o.syncDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(o.syncDate)) {
       return false;
     }
   }
@@ -113,7 +113,7 @@ async function handleSync(req: IncomingMessage, res: ServerResponse): Promise<vo
   if (!isSyncConfig(body)) {
     sendJson(res, 400, {
       error:
-        "Missing or invalid fields. Required: csvUrl (string), spreadsheetId (string), sheetName (string), dateColumnIndex (number). Optional: syncMonth (string, YYYY-MM).",
+        "Missing or invalid fields. Required: csvUrl (string), spreadsheetId (string), sheetName (string), dateColumnIndex (number). Optional: syncDate (string, YYYY-MM-DD).",
     });
     return;
   }
@@ -167,6 +167,6 @@ const server = createServer(requestListener);
 
 server.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
-  console.log("  POST /sync   – run sync (JSON body: csvUrl, spreadsheetId, sheetName, dateColumnIndex, [syncMonth])");
+  console.log("  POST /sync   – run sync (JSON body: csvUrl, spreadsheetId, sheetName, dateColumnIndex, [syncDate])");
   console.log("  GET  /health – liveness");
 });

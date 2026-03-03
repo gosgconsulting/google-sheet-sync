@@ -1,10 +1,10 @@
 /**
- * Syncs specific-month data from a public CSV into Google Sheets.
+ * Syncs specific-date data from a public CSV into Google Sheets.
  *
  * Behavior:
  * - Keeps historical rows
- * - Deletes rows from the target month
- * - Appends fresh rows from CSV (target month only)
+ * - Deletes rows from the target dates
+ * - Appends fresh rows from CSV (target dates only)
  *
  * Designed for daily execution.
  */
@@ -39,7 +39,7 @@ export interface SyncConfig {
   spreadsheetId: string;
   sheetName: string;
   dateColumnIndex: number; // 0-based index
-  syncMonth?: string; // Format YYYY-MM. Defaults to current month if not provided.
+  syncDate?: string; // Format YYYY-MM-DD. Defaults to current day if not provided.
 }
 
 /* -------------------------------------------------------------------------- */
@@ -47,10 +47,23 @@ export interface SyncConfig {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Returns YYYY-MM string for comparison.
+ * Returns YYYY-MM-DD string for comparison.
  */
-function toYearMonth(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+function toYearMonthDay(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Returns an array of the last 7 days (today included) formatted as YYYY-MM-DD.
+ */
+function getLast7Days(): string[] {
+  const dates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    dates.push(toYearMonthDay(d));
+  }
+  return dates;
 }
 
 /**
@@ -84,12 +97,12 @@ async function fetchCsv(url: string): Promise<CsvRow[]> {
 }
 
 /**
- * Filters CSV rows belonging to the target month.
+ * Filters CSV rows belonging to specific dates.
  */
-function filterCsvRowsByMonth(
+function filterCsvRowsByDates(
   rows: CsvRow[],
   dateField: string,
-  targetMonth: string
+  targetDates: string[]
 ): SheetRow[] {
   const stripLeadingQuote = (s: string): string =>
     s.startsWith("'") ? s.slice(1) : s;
@@ -102,7 +115,7 @@ function filterCsvRowsByMonth(
       const date = parseDateSafe(raw);
       if (!date) return null;
 
-      if (toYearMonth(date) !== targetMonth) return null;
+      if (!targetDates.includes(toYearMonthDay(date))) return null;
 
       return Object.values(row).map((v) =>
         typeof v === "string" ? stripLeadingQuote(v) : v
@@ -170,22 +183,22 @@ async function readSheetRows(
 }
 
 /**
- * Deletes rows belonging to the target month.
+ * Deletes rows belonging to specific dates.
  */
-async function deleteRowsByMonth(
+async function deleteRowsByDates(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
   sheetId: number,
   rows: SheetRow[],
   dateColumnIndex: number,
-  targetMonth: string
+  targetDates: string[]
 ): Promise<void> {
   const rowIndexes = rows
     .map((row, index) => {
       const cell = row[dateColumnIndex];
       const date = parseDateSafe(cell !== undefined ? cell : "");
       if (!date) return null;
-      return toYearMonth(date) === targetMonth ? index + 1 : null; // +1 for header offset
+      return targetDates.includes(toYearMonthDay(date)) ? index + 1 : null; // +1 for header offset
     })
     .filter((i): i is number => i !== null)
     .reverse();
@@ -239,7 +252,7 @@ async function appendRows(
  */
 export async function syncCsvToSheet(config: SyncConfig): Promise<void> {
   const sheets = getSheetsClient();
-  const targetMonth = config.syncMonth || toYearMonth(new Date());
+  const targetDates = config.syncDate ? [config.syncDate] : getLast7Days();
 
   const csvRows = await fetchCsv(config.csvUrl);
   const firstRow = csvRows[0];
@@ -252,13 +265,6 @@ export async function syncCsvToSheet(config: SyncConfig): Promise<void> {
       `Date column index ${config.dateColumnIndex} is out of range (CSV has ${Object.keys(firstRow).length} columns)`
     );
   }
-  const monthRows = filterCsvRowsByMonth(csvRows, dateColumnKey, targetMonth);
-
-  const sheetRows = await readSheetRows(
-    sheets,
-    config.spreadsheetId,
-    config.sheetName
-  );
 
   const meta = await sheets.spreadsheets.get({
     spreadsheetId: config.spreadsheetId,
@@ -269,19 +275,32 @@ export async function syncCsvToSheet(config: SyncConfig): Promise<void> {
       (s) => s.properties?.title === config.sheetName
     )?.properties?.sheetId ?? 0;
 
-  await deleteRowsByMonth(
+  const sheetRows = await readSheetRows(
+    sheets,
+    config.spreadsheetId,
+    config.sheetName
+  );
+
+  const matchedRows = filterCsvRowsByDates(
+    csvRows,
+    dateColumnKey,
+    targetDates
+  );
+
+  await deleteRowsByDates(
     sheets,
     config.spreadsheetId,
     sheetId,
     sheetRows,
     config.dateColumnIndex,
-    targetMonth
+    targetDates
   );
 
   await appendRows(
     sheets,
     config.spreadsheetId,
     config.sheetName,
-    monthRows
+    matchedRows
   );
 }
+
