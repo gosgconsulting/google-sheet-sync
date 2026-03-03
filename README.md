@@ -1,12 +1,12 @@
 # google-sheet-sync
 
-Syncs current-month data from a public CSV into a Google Sheet. Keeps historical rows, replaces only the current month’s rows with fresh data from the CSV. Suited for daily or on-demand runs.
+Syncs specific-month data from a public CSV into a Google Sheet. Keeps historical rows, replaces only the target month’s rows with fresh data from the CSV. Suited for daily or on-demand runs.
 
 ## Behavior
 
 - Fetches and parses a CSV from a public URL
-- Filters rows for the current month (by a configurable date column)
-- In the target sheet: deletes existing rows for the current month, then appends the filtered CSV rows
+- Filters rows for a specific month (defaults to current month) by a configurable date column
+- In the target sheet: deletes existing rows for the target month, then appends the filtered CSV rows
 - Past months in the sheet are left unchanged
 
 ## Requirements
@@ -49,6 +49,7 @@ npm start
 | `spreadsheetId`     | string | Google Sheet ID (from the sheet URL). |
 | `sheetName`         | string | Exact name of the tab/sheet. |
 | `dateColumnIndex`   | number | 0-based index of the date column in the CSV. |
+| `syncMonth`         | string | *(Optional)* Target month formatted as `YYYY-MM`. Defaults to the current month if omitted. |
 
 Example:
 
@@ -59,7 +60,8 @@ curl -X POST http://localhost:3000/sync \
     "csvUrl": "https://example.com/data.csv",
     "spreadsheetId": "your-spreadsheet-id",
     "sheetName": "Sheet1",
-    "dateColumnIndex": 0
+    "dateColumnIndex": 0,
+    "syncMonth": "2024-05"
   }'
 ```
 
@@ -75,6 +77,7 @@ await syncCsvToSheet({
   spreadsheetId: "your-spreadsheet-id",
   sheetName: "Sheet1",
   dateColumnIndex: 0,
+  syncMonth: "2024-05", // Optional
 });
 ```
 

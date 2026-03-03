@@ -1,10 +1,10 @@
 /**
- * Syncs current-month data from a public CSV into Google Sheets.
+ * Syncs specific-month data from a public CSV into Google Sheets.
  *
  * Behavior:
  * - Keeps historical rows
- * - Deletes rows from the current month
- * - Appends fresh rows from CSV (current month only)
+ * - Deletes rows from the target month
+ * - Appends fresh rows from CSV (target month only)
  *
  * Designed for daily execution.
  */
@@ -39,6 +39,7 @@ export interface SyncConfig {
   spreadsheetId: string;
   sheetName: string;
   dateColumnIndex: number; // 0-based index
+  syncMonth?: string; // Format YYYY-MM. Defaults to current month if not provided.
 }
 
 /* -------------------------------------------------------------------------- */
@@ -83,14 +84,13 @@ async function fetchCsv(url: string): Promise<CsvRow[]> {
 }
 
 /**
- * Filters CSV rows belonging to the current month.
+ * Filters CSV rows belonging to the target month.
  */
-function filterCurrentMonthCsvRows(
+function filterCsvRowsByMonth(
   rows: CsvRow[],
-  dateField: string
+  dateField: string,
+  targetMonth: string
 ): SheetRow[] {
-  const nowYM = toYearMonth(new Date());
-
   const stripLeadingQuote = (s: string): string =>
     s.startsWith("'") ? s.slice(1) : s;
 
@@ -102,7 +102,7 @@ function filterCurrentMonthCsvRows(
       const date = parseDateSafe(raw);
       if (!date) return null;
 
-      if (toYearMonth(date) !== nowYM) return null;
+      if (toYearMonth(date) !== targetMonth) return null;
 
       return Object.values(row).map((v) =>
         typeof v === "string" ? stripLeadingQuote(v) : v
@@ -122,7 +122,7 @@ function filterCurrentMonthCsvRows(
  * @returns Parsed credentials object, or undefined to use default (file path).
  */
 function parseGoogleCredentials():
-  | { client_email: string; private_key: string; [k: string]: unknown }
+  | { client_email: string; private_key: string;[k: string]: unknown }
   | undefined {
   const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (!raw || typeof raw !== "string") return undefined;
@@ -130,7 +130,7 @@ function parseGoogleCredentials():
   if (trimmed.startsWith("{")) {
     try {
       const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      if (parsed.client_email && parsed.private_key) return parsed as { client_email: string; private_key: string; [k: string]: unknown };
+      if (parsed.client_email && parsed.private_key) return parsed as { client_email: string; private_key: string;[k: string]: unknown };
     } catch {
       // Invalid JSON – fall back to default (treat as path, will likely fail)
     }
@@ -170,23 +170,22 @@ async function readSheetRows(
 }
 
 /**
- * Deletes rows belonging to the current month.
+ * Deletes rows belonging to the target month.
  */
-async function deleteCurrentMonthRows(
+async function deleteRowsByMonth(
   sheets: sheets_v4.Sheets,
   spreadsheetId: string,
   sheetId: number,
   rows: SheetRow[],
-  dateColumnIndex: number
+  dateColumnIndex: number,
+  targetMonth: string
 ): Promise<void> {
-  const nowYM = toYearMonth(new Date());
-
   const rowIndexes = rows
     .map((row, index) => {
       const cell = row[dateColumnIndex];
       const date = parseDateSafe(cell !== undefined ? cell : "");
       if (!date) return null;
-      return toYearMonth(date) === nowYM ? index + 1 : null; // +1 for header offset
+      return toYearMonth(date) === targetMonth ? index + 1 : null; // +1 for header offset
     })
     .filter((i): i is number => i !== null)
     .reverse();
@@ -240,6 +239,7 @@ async function appendRows(
  */
 export async function syncCsvToSheet(config: SyncConfig): Promise<void> {
   const sheets = getSheetsClient();
+  const targetMonth = config.syncMonth || toYearMonth(new Date());
 
   const csvRows = await fetchCsv(config.csvUrl);
   const firstRow = csvRows[0];
@@ -252,7 +252,7 @@ export async function syncCsvToSheet(config: SyncConfig): Promise<void> {
       `Date column index ${config.dateColumnIndex} is out of range (CSV has ${Object.keys(firstRow).length} columns)`
     );
   }
-  const monthRows = filterCurrentMonthCsvRows(csvRows, dateColumnKey);
+  const monthRows = filterCsvRowsByMonth(csvRows, dateColumnKey, targetMonth);
 
   const sheetRows = await readSheetRows(
     sheets,
@@ -269,12 +269,13 @@ export async function syncCsvToSheet(config: SyncConfig): Promise<void> {
       (s) => s.properties?.title === config.sheetName
     )?.properties?.sheetId ?? 0;
 
-  await deleteCurrentMonthRows(
+  await deleteRowsByMonth(
     sheets,
     config.spreadsheetId,
     sheetId,
     sheetRows,
-    config.dateColumnIndex
+    config.dateColumnIndex,
+    targetMonth
   );
 
   await appendRows(
